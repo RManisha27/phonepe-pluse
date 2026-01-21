@@ -1,5 +1,3 @@
-.PHONEPE TRANSCATION INSIGHTS
-
 PhonePe Pulse Data Visualization and Exploration
 Project Overview
 This project aims to visualize and analyze PhonePe Pulse data to provide comprehensive insights into digital payment trends across India. By extracting, transforming, and loading data from the official PhonePe Pulse GitHub repository into a structured SQLite database, and then building an interactive Streamlit application, users can explore various metrics related to transactions and user engagement.
@@ -62,3 +60,4 @@ Get the Public URL: After ngrok authentication, open a tunnel to the Streamlit p
 from pyngrok import ngrok
 public_url = ngrok.connect(addr="8501", proto="http")
 print(f"Streamlit App URL: {public_url}")
+Copy the provided Streamlit App URL and paste it into your web browser to access the application
