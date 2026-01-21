@@ -1,4 +1,4 @@
-PHONEPE TRANSCATION INSIGHTS
+.PHONEPE TRANSCATION INSIGHTS
 
 PhonePe Pulse Data Visualization and Exploration
 Project Overview
