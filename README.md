@@ -1,3 +1,4 @@
+PHONEPE TRANSCATION INSIGHTS
 PhonePe Pulse Data Visualization and Exploration
 Project Overview
 This project aims to visualize and analyze PhonePe Pulse data to provide comprehensive insights into digital payment trends across India. By extracting, transforming, and loading data from the official PhonePe Pulse GitHub repository into a structured SQLite database, and then building an interactive Streamlit application, users can explore various metrics related to transactions and user engagement.
