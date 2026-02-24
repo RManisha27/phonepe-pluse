@@ -1,4 +1,5 @@
 📊 PhonePe Transaction Insights Dashboard
+
 📌 Project Overview
 
 This project is an interactive data analytics dashboard built using Python and Streamlit to analyze PhonePe transaction data across India.
@@ -20,6 +21,7 @@ Pandas
 Plotly
 
 📂 Features
+
 🔹 Geo Analysis
 
 State-wise transaction amount visualization
@@ -94,5 +96,6 @@ Business insight generation from raw data
 pip install -r requirements.txt
 
 streamlit run app.py
+
 
 
