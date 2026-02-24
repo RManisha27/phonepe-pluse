@@ -1,5 +1,3 @@
-:
-
 📊 PhonePe Transaction Insights Dashboard
 📌 Project Overview
 
@@ -95,3 +93,4 @@ Business insight generation from raw data
 ▶ How to Run Locally
 pip install -r requirements.txt
 streamlit run app.py
+
