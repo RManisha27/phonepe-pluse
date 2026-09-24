@@ -1,254 +1,409 @@
 import os
 import json
 import pandas as pd
-import sqlite3
 
 
-# ----------------------- AGGREGATED TRANSACTION -----------------------
+BASE_PATH = "pulse/data"
+
+
+def get_json_files(relative_path):
+    """Get all JSON files from a PhonePe Pulse data folder."""
+    path = os.path.join(BASE_PATH, relative_path)
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Data folder not found: {path}\n"
+            "Make sure the PhonePe Pulse repository is downloaded."
+        )
+
+    return path
+
+
+# ---------------------------------------------------------
+# AGGREGATED TRANSACTIONS
+# ---------------------------------------------------------
 
 def agg_trans_data():
-    path = 'pulse/data/aggregated/transaction/country/india/state/'
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'year': [], 'quarter': [],
-        'transaction_type': [], 'transaction_count': [],
-        'transaction_amount': []
-    }
+    path = get_json_files(
+        "aggregated/transaction/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                for item in data['data']['transactionData']:
-                    data_dict['state'].append(state)
-                    data_dict['year'].append(year)
-                    data_dict['quarter'].append(int(quarter.strip('.json')))
-                    data_dict['transaction_type'].append(item['name'])
-                    data_dict['transaction_count'].append(item['paymentInstruments'][0]['count'])
-                    data_dict['transaction_amount'].append(item['paymentInstruments'][0]['amount'])
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    return df
+        for year in os.listdir(state_path):
+
+            year_path = os.path.join(state_path, year)
+
+            if not os.path.isdir(year_path):
+                continue
+
+            for quarter_file in os.listdir(year_path):
+
+                if not quarter_file.endswith(".json"):
+                    continue
+
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+
+                transactions = (
+                    json_data.get("data", {})
+                    .get("transactionData", [])
+                )
+
+                for item in transactions:
+
+                    instrument = item.get(
+                        "paymentInstruments", [{}]
+                    )[0]
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "transaction_type": item.get("name"),
+                        "transaction_count": instrument.get("count", 0),
+                        "transaction_amount": instrument.get("amount", 0)
+                    })
+
+    return pd.DataFrame(data)
 
 
-# ----------------------- AGGREGATED USER -----------------------
+# ---------------------------------------------------------
+# AGGREGATED USERS
+# ---------------------------------------------------------
 
 def agg_user_data():
-    path = "pulse/data/aggregated/user/country/india/state/"
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'year': [], 'quarter': [],
-        'brand': [], 'user_count': [], 'percentage': []
-    }
+    path = get_json_files(
+        "aggregated/user/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                try:
-                    for item in data['data']['usersByDevice']:
-                        data_dict['state'].append(state)
-                        data_dict['year'].append(year)
-                        data_dict['quarter'].append(int(quarter.strip('.json')))
-                        data_dict['brand'].append(item['brand'])
-                        data_dict['user_count'].append(item['count'])
-                        data_dict['percentage'].append(item['percentage'])
-                except:
-                    pass
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    return df
+        for year in os.listdir(state_path):
+
+            year_path = os.path.join(state_path, year)
+
+            if not os.path.isdir(year_path):
+                continue
+
+            for quarter_file in os.listdir(year_path):
+
+                if not quarter_file.endswith(".json"):
+                    continue
+
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+
+                users = (
+                    json_data.get("data", {})
+                    .get("usersByDevice", [])
+                )
+
+                for item in users:
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "brand": item.get("brand"),
+                        "user_count": item.get("count", 0),
+                        "percentage": item.get("percentage", 0)
+                    })
+
+    return pd.DataFrame(data)
 
 
-# ----------------------- MAP TRANSACTION -----------------------
+# ---------------------------------------------------------
+# MAP TRANSACTIONS
+# ---------------------------------------------------------
 
 def map_trans_data():
-    path = "pulse/data/map/transaction/hover/country/india/state/"
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'district': [], 'year': [],
-        'quarter': [], 'transaction_count': [], 'transaction_amount': []
-    }
+    path = get_json_files(
+        "map/transaction/hover/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                for item in data['data']['hoverDataList']:
-                    data_dict['state'].append(state)
-                    data_dict['district'].append(item['name'])
-                    data_dict['year'].append(year)
-                    data_dict['quarter'].append(int(quarter.strip('.json')))
-                    data_dict['transaction_count'].append(item['metric'][0]['count'])
-                    data_dict['transaction_amount'].append(item['metric'][0]['amount'])
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    df['district'] = df['district'].str.replace("district", "").str.title()
-    return df
+        for year in os.listdir(state_path):
+
+            year_path = os.path.join(state_path, year)
+
+            if not os.path.isdir(year_path):
+                continue
+
+            for quarter_file in os.listdir(year_path):
+
+                if not quarter_file.endswith(".json"):
+                    continue
+
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+
+                districts = (
+                    json_data.get("data", {})
+                    .get("hoverDataList", [])
+                )
+
+                for item in districts:
+
+                    metric = item.get("metric", [{}])[0]
+
+                    district = item.get("name", "")
+                    district = district.replace(
+                        "district", ""
+                    ).strip().title()
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "district": district,
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "transaction_count": metric.get(
+                            "count", 0
+                        ),
+                        "transaction_amount": metric.get(
+                            "amount", 0
+                        )
+                    })
+
+    return pd.DataFrame(data)
 
 
-# ----------------------- MAP USER -----------------------
+# ---------------------------------------------------------
+# MAP USERS
+# ---------------------------------------------------------
 
 def map_user_data():
-    path = "pulse/data/map/user/hover/country/india/state/"
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'district': [], 'year': [],
-        'quarter': [], 'registered_users': [], 'app_opens': []
-    }
+    path = get_json_files(
+        "map/user/hover/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                for district, values in data['data']['hoverData'].items():
-                    data_dict['state'].append(state)
-                    data_dict['district'].append(district)
-                    data_dict['year'].append(year)
-                    data_dict['quarter'].append(int(quarter.strip('.json')))
-                    data_dict['registered_users'].append(values['registeredUsers'])
-                    data_dict['app_opens'].append(values['appOpens'])
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    df['district'] = df['district'].str.replace("district", "").str.title()
-    return df
+        for year in os.listdir(state_path):
+
+            year_path = os.path.join(state_path, year)
+
+            if not os.path.isdir(year_path):
+                continue
+
+            for quarter_file in os.listdir(year_path):
+
+                if not quarter_file.endswith(".json"):
+                    continue
+
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+
+                users = (
+                    json_data.get("data", {})
+                    .get("hoverData", {})
+                )
+
+                for district, values in users.items():
+
+                    district = district.replace(
+                        "district", ""
+                    ).strip().title()
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "district": district,
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "registered_users": values.get(
+                            "registeredUsers", 0
+                        ),
+                        "app_opens": values.get(
+                            "appOpens", 0
+                        )
+                    })
+
+    return pd.DataFrame(data)
 
 
-# ----------------------- TOP TRANSACTION -----------------------
+# ---------------------------------------------------------
+# TOP TRANSACTIONS
+# ---------------------------------------------------------
 
 def top_trans_data():
-    path = "pulse/data/top/transaction/country/india/state/"
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'pincode': [], 'year': [],
-        'quarter': [], 'transaction_count': [], 'transaction_amount': []
-    }
+    path = get_json_files(
+        "top/transaction/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                for item in data['data']['pincodes']:
-                    data_dict['state'].append(state)
-                    data_dict['pincode'].append(item['entityName'])
-                    data_dict['year'].append(year)
-                    data_dict['quarter'].append(int(quarter.strip('.json')))
-                    data_dict['transaction_count'].append(item['metric']['count'])
-                    data_dict['transaction_amount'].append(item['metric']['amount'])
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    return df
+        for year in os.listdir(state_path):
+
+            year_path = os.path.join(state_path, year)
+
+            if not os.path.isdir(year_path):
+                continue
+
+            for quarter_file in os.listdir(year_path):
+
+                if not quarter_file.endswith(".json"):
+                    continue
+
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+
+                pincodes = (
+                    json_data.get("data", {})
+                    .get("pincodes", [])
+                )
+
+                for item in pincodes:
+
+                    metric = item.get("metric", {})
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "pincode": item.get("entityName"),
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "transaction_count": metric.get(
+                            "count", 0
+                        ),
+                        "transaction_amount": metric.get(
+                            "amount", 0
+                        )
+                    })
+
+    return pd.DataFrame(data)
 
 
-# ----------------------- TOP USER -----------------------
+# ---------------------------------------------------------
+# TOP USERS
+# ---------------------------------------------------------
 
 def top_user_data():
-    path = "pulse/data/top/user/country/india/state/"
-    states = os.listdir(path)
 
-    data_dict = {
-        'state': [], 'pincode': [], 'year': [],
-        'quarter': [], 'registered_users': []
-    }
+    path = get_json_files(
+        "top/user/country/india/state"
+    )
 
-    for state in states:
-        state_path = path + state + "/"
-        years = os.listdir(state_path)
+    data = []
 
-        for year in years:
-            year_path = state_path + year + "/"
-            quarters = os.listdir(year_path)
+    for state in os.listdir(path):
 
-            for quarter in quarters:
-                file_path = year_path + quarter
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
+        state_path = os.path.join(path, state)
 
-                for item in data['data']['pincodes']:
-                    data_dict['state'].append(state)
-                    data_dict['pincode'].append(item['name'])
-                    data_dict['year'].append(year)
-                    data_dict['quarter'].append(int(quarter.strip('.json')))
-                    data_dict['registered_users'].append(item['registeredUsers'])
+        if not os.path.isdir(state_path):
+            continue
 
-    df = pd.DataFrame(data_dict)
-    df['state'] = df['state'].str.replace("-", " ").str.title()
-    return df
+        for year in os.listdir(state_path):
 
+            year_path = os.path.join(state_path, year)
 
-# ----------------------- CREATE DATABASE -----------------------
+            if not os.path.isdir(year_path):
+                continue
 
-def create_database():
-    conn = sqlite3.connect('phonepe_data.db')
+            for quarter_file in os.listdir(year_path):
 
-    agg_trans_data().to_sql('aggregated_transactions', conn, if_exists='replace', index=False)
-    agg_user_data().to_sql('aggregated_users', conn, if_exists='replace', index=False)
-    map_trans_data().to_sql('map_transactions', conn, if_exists='replace', index=False)
-    map_user_data().to_sql('map_users', conn, if_exists='replace', index=False)
-    top_trans_data().to_sql('top_transactions', conn, if_exists='replace', index=False)
-    top_user_data().to_sql('top_users', conn, if_exists='replace', index=False)
+                if not quarter_file.endswith(".json"):
+                    continue
 
-    conn.commit()
-    conn.close()
+                file_path = os.path.join(
+                    year_path,
+                    quarter_file
+                )
 
-    print("Database created successfully: phonepe_data.db")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
 
+                pincodes = (
+                    json_data.get("data", {})
+                    .get("pincodes", [])
+                )
 
-# Run only if file executed directly
-if __name__ == "__main__":
-    create_database()
+                for item in pincodes:
+
+                    data.append({
+                        "state": state.replace("-", " ").title(),
+                        "pincode": item.get("name"),
+                        "year": int(year),
+                        "quarter": int(
+                            quarter_file.replace(".json", "")
+                        ),
+                        "registered_users": item.get(
+                            "registeredUsers", 0
+                        )
+                    })
+
+    return pd.DataFrame(data)
