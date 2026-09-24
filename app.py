@@ -1,597 +1,1228 @@
-import streamlit as st
-import pandas as pd
-import json
 import os
+import json
+import zipfile
+import requests
+import shutil
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 import plotly.express as px
 
 
-# =========================================================
-# PAGE CONFIGURATION
-# =========================================================
+# ============================================================
+# PAGE CONFIG
+# ============================================================
 
 st.set_page_config(
-    page_title="PhonePe Transaction Insights",
+    page_title="PhonePe Pulse Dashboard",
     page_icon="📱",
     layout="wide"
 )
 
 
-# =========================================================
-# TITLE
-# =========================================================
+# ============================================================
+# SETTINGS
+# ============================================================
 
-st.title("📱 PhonePe Transaction Insights")
-st.markdown(
-    "Interactive dashboard for exploring PhonePe transactions "
-    "and user activity across India."
+REPO_ZIP_URL = (
+    "https://github.com/PhonePe/pulse/archive/refs/heads/main.zip"
 )
 
-
-# =========================================================
-# BASE DATA PATH
-# =========================================================
-
-BASE_PATH = "pulse/data"
+BASE_DIR = Path("/tmp/phonepe_pulse")
+DATA_DIR = BASE_DIR / "pulse-main" / "data"
 
 
-# =========================================================
-# CHECK DATA
-# =========================================================
+# ============================================================
+# DOWNLOAD PHONEPE DATA
+# ============================================================
 
-if not os.path.exists(BASE_PATH):
+@st.cache_resource
+def download_phonepe_data():
 
-    st.error(
-        "PhonePe Pulse data was not found."
-    )
+    if DATA_DIR.exists():
+        return DATA_DIR
 
-    st.info(
-        "Make sure the `pulse` folder is present in your project."
-    )
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-    st.code(
-        "git clone https://github.com/PhonePe/pulse.git"
-    )
+    zip_file = BASE_DIR / "phonepe.zip"
 
-    st.stop()
+    try:
+        with st.spinner("Downloading PhonePe Pulse data..."):
 
-
-# =========================================================
-# FUNCTION: LOAD AGGREGATED TRANSACTIONS
-# =========================================================
-
-@st.cache_data
-def load_transactions():
-
-    path = os.path.join(
-        BASE_PATH,
-        "aggregated",
-        "transaction",
-        "country",
-        "india",
-        "state"
-    )
-
-    data = []
-
-    for state in os.listdir(path):
-
-        state_path = os.path.join(path, state)
-
-        if not os.path.isdir(state_path):
-            continue
-
-        for year in os.listdir(state_path):
-
-            year_path = os.path.join(
-                state_path,
-                year
+            response = requests.get(
+                REPO_ZIP_URL,
+                stream=True,
+                timeout=180
             )
 
-            if not os.path.isdir(year_path):
-                continue
+            response.raise_for_status()
 
-            for quarter_file in os.listdir(year_path):
+            with open(zip_file, "wb") as f:
 
-                if not quarter_file.endswith(".json"):
-                    continue
+                for chunk in response.iter_content(
+                    chunk_size=1024 * 1024
+                ):
 
-                file_path = os.path.join(
-                    year_path,
-                    quarter_file
-                )
+                    if chunk:
+                        f.write(chunk)
 
-                with open(
-                    file_path,
-                    "r",
-                    encoding="utf-8"
-                ) as f:
+        with st.spinner("Extracting PhonePe Pulse data..."):
 
-                    json_data = json.load(f)
+            with zipfile.ZipFile(
+                zip_file,
+                "r"
+            ) as zip_ref:
 
-                transactions = (
-                    json_data
-                    .get("data", {})
-                    .get("transactionData", [])
-                )
+                zip_ref.extractall(BASE_DIR)
 
-                for item in transactions:
+        if not DATA_DIR.exists():
 
-                    instrument = item.get(
-                        "paymentInstruments",
-                        [{}]
-                    )[0]
+            raise FileNotFoundError(
+                "PhonePe data folder was not found after extraction."
+            )
 
-                    data.append({
+        return DATA_DIR
 
-                        "State":
-                            state.replace(
-                                "-",
-                                " "
-                            ).title(),
+    except Exception as e:
 
-                        "Year":
-                            int(year),
-
-                        "Quarter":
-                            int(
-                                quarter_file
-                                .replace(
-                                    ".json",
-                                    ""
-                                )
-                            ),
-
-                        "Transaction Type":
-                            item.get(
-                                "name"
-                            ),
-
-                        "Transaction Count":
-                            instrument.get(
-                                "count",
-                                0
-                            ),
-
-                        "Transaction Amount":
-                            instrument.get(
-                                "amount",
-                                0
-                            )
-                    })
-
-    return pd.DataFrame(data)
-
-
-# =========================================================
-# FUNCTION: LOAD AGGREGATED USERS
-# =========================================================
-
-@st.cache_data
-def load_users():
-
-    path = os.path.join(
-        BASE_PATH,
-        "aggregated",
-        "user",
-        "country",
-        "india",
-        "state"
-    )
-
-    data = []
-
-    for state in os.listdir(path):
-
-        state_path = os.path.join(
-            path,
-            state
+        st.error(
+            f"Unable to download PhonePe Pulse data: {e}"
         )
 
-        if not os.path.isdir(state_path):
+        st.stop()
+
+
+DATA_ROOT = download_phonepe_data()
+
+
+# ============================================================
+# HELPER
+# ============================================================
+
+def clean_name(value):
+
+    if value is None:
+        return ""
+
+    return str(value).replace(
+        "-", " "
+    ).replace(
+        "_", " "
+    ).title()
+
+
+def quarter_number(filename):
+
+    return int(
+        Path(filename).stem
+    )
+
+
+# ============================================================
+# AGGREGATED TRANSACTIONS
+# ============================================================
+
+@st.cache_data
+def load_aggregated_transactions(data_root):
+
+    path = (
+        data_root
+        / "aggregated"
+        / "transaction"
+        / "country"
+        / "india"
+        / "state"
+    )
+
+    rows = []
+
+    if not path.exists():
+        return pd.DataFrame()
+
+    for state_dir in path.iterdir():
+
+        if not state_dir.is_dir():
             continue
 
-        for year in os.listdir(state_path):
+        for year_dir in state_dir.iterdir():
 
-            year_path = os.path.join(
-                state_path,
-                year
-            )
-
-            if not os.path.isdir(year_path):
+            if not year_dir.is_dir():
                 continue
 
-            for quarter_file in os.listdir(year_path):
+            for file in year_dir.glob("*.json"):
 
-                if not quarter_file.endswith(".json"):
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    transaction_data = (
+                        data.get("data", {})
+                        .get("transactionData", [])
+                    )
+
+                    for item in transaction_data:
+
+                        instruments = item.get(
+                            "paymentInstruments",
+                            []
+                        )
+
+                        if not instruments:
+                            continue
+
+                        instrument = instruments[0]
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
+                            ),
+                            "Year": int(
+                                year_dir.name
+                            ),
+                            "Quarter": quarter_number(
+                                file.name
+                            ),
+                            "Transaction Type":
+                                item.get("name", "Unknown"),
+                            "Transaction Count":
+                                instrument.get("count", 0),
+                            "Transaction Amount":
+                                instrument.get("amount", 0)
+                        })
+
+                except Exception:
                     continue
 
-                file_path = os.path.join(
-                    year_path,
-                    quarter_file
-                )
+    return pd.DataFrame(rows)
 
-                with open(
-                    file_path,
-                    "r",
-                    encoding="utf-8"
-                ) as f:
 
-                    json_data = json.load(f)
+# ============================================================
+# AGGREGATED USERS
+# ============================================================
 
-                users = (
-                    json_data
-                    .get("data", {})
-                    .get("usersByDevice", [])
-                )
+@st.cache_data
+def load_aggregated_users(data_root):
 
-                for item in users:
+    path = (
+        data_root
+        / "aggregated"
+        / "user"
+        / "country"
+        / "india"
+        / "state"
+    )
 
-                    data.append({
+    rows = []
 
-                        "State":
-                            state.replace(
-                                "-",
-                                " "
-                            ).title(),
+    if not path.exists():
+        return pd.DataFrame()
 
-                        "Year":
-                            int(year),
+    for state_dir in path.iterdir():
 
-                        "Quarter":
-                            int(
-                                quarter_file
-                                .replace(
-                                    ".json",
-                                    ""
-                                )
+        if not state_dir.is_dir():
+            continue
+
+        for year_dir in state_dir.iterdir():
+
+            if not year_dir.is_dir():
+                continue
+
+            for file in year_dir.glob("*.json"):
+
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    info = data.get(
+                        "data",
+                        {}
+                    )
+
+                    # Older PhonePe Pulse format
+                    users_by_device = info.get(
+                        "usersByDevice",
+                        []
+                    )
+
+                    for item in users_by_device:
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
                             ),
-
-                        "Brand":
-                            item.get(
-                                "brand"
+                            "Year": int(
+                                year_dir.name
                             ),
-
-                        "User Count":
-                            item.get(
+                            "Quarter": quarter_number(
+                                file.name
+                            ),
+                            "Brand": item.get(
+                                "brand",
+                                "Unknown"
+                            ),
+                            "User Count": item.get(
                                 "count",
                                 0
                             ),
-
-                        "Percentage":
-                            item.get(
+                            "Percentage": item.get(
                                 "percentage",
                                 0
                             )
-                    })
+                        })
 
-    return pd.DataFrame(data)
+                except Exception:
+                    continue
+
+    return pd.DataFrame(rows)
 
 
-# =========================================================
-# LOAD DATA
-# =========================================================
+# ============================================================
+# MAP TRANSACTIONS
+# ============================================================
+
+@st.cache_data
+def load_map_transactions(data_root):
+
+    path = (
+        data_root
+        / "map"
+        / "transaction"
+        / "hover"
+        / "country"
+        / "india"
+        / "state"
+    )
+
+    rows = []
+
+    if not path.exists():
+        return pd.DataFrame()
+
+    for state_dir in path.iterdir():
+
+        if not state_dir.is_dir():
+            continue
+
+        for year_dir in state_dir.iterdir():
+
+            if not year_dir.is_dir():
+                continue
+
+            for file in year_dir.glob("*.json"):
+
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    items = (
+                        data.get("data", {})
+                        .get("hoverDataList", [])
+                    )
+
+                    for item in items:
+
+                        metrics = item.get(
+                            "metric",
+                            []
+                        )
+
+                        if not metrics:
+                            continue
+
+                        metric = metrics[0]
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
+                            ),
+                            "District": clean_name(
+                                item.get(
+                                    "name",
+                                    ""
+                                )
+                            ),
+                            "Year": int(
+                                year_dir.name
+                            ),
+                            "Quarter": quarter_number(
+                                file.name
+                            ),
+                            "Transaction Count":
+                                metric.get(
+                                    "count",
+                                    0
+                                ),
+                            "Transaction Amount":
+                                metric.get(
+                                    "amount",
+                                    0
+                                )
+                        })
+
+                except Exception:
+                    continue
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# MAP USERS
+# ============================================================
+
+@st.cache_data
+def load_map_users(data_root):
+
+    path = (
+        data_root
+        / "map"
+        / "user"
+        / "hover"
+        / "country"
+        / "india"
+        / "state"
+    )
+
+    rows = []
+
+    if not path.exists():
+        return pd.DataFrame()
+
+    for state_dir in path.iterdir():
+
+        if not state_dir.is_dir():
+            continue
+
+        for year_dir in state_dir.iterdir():
+
+            if not year_dir.is_dir():
+                continue
+
+            for file in year_dir.glob("*.json"):
+
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    hover_data = (
+                        data.get("data", {})
+                        .get("hoverData", {})
+                    )
+
+                    for district, values in hover_data.items():
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
+                            ),
+                            "District": clean_name(
+                                district
+                            ),
+                            "Year": int(
+                                year_dir.name
+                            ),
+                            "Quarter": quarter_number(
+                                file.name
+                            ),
+                            "Registered Users":
+                                values.get(
+                                    "registeredUsers",
+                                    values.get(
+                                        "registeredCount",
+                                        0
+                                    )
+                                ),
+                            "App Opens":
+                                values.get(
+                                    "appOpens",
+                                    0
+                                )
+                        })
+
+                except Exception:
+                    continue
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# TOP TRANSACTIONS
+# ============================================================
+
+@st.cache_data
+def load_top_transactions(data_root):
+
+    path = (
+        data_root
+        / "top"
+        / "transaction"
+        / "country"
+        / "india"
+        / "state"
+    )
+
+    rows = []
+
+    if not path.exists():
+        return pd.DataFrame()
+
+    for state_dir in path.iterdir():
+
+        if not state_dir.is_dir():
+            continue
+
+        for year_dir in state_dir.iterdir():
+
+            if not year_dir.is_dir():
+                continue
+
+            for file in year_dir.glob("*.json"):
+
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    pincodes = (
+                        data.get("data", {})
+                        .get("pincodes", [])
+                    )
+
+                    for item in pincodes:
+
+                        metric = item.get(
+                            "metric",
+                            {}
+                        )
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
+                            ),
+                            "Pincode":
+                                item.get(
+                                    "entityName",
+                                    ""
+                                ),
+                            "Year": int(
+                                year_dir.name
+                            ),
+                            "Quarter":
+                                quarter_number(
+                                    file.name
+                                ),
+                            "Transaction Count":
+                                metric.get(
+                                    "count",
+                                    0
+                                ),
+                            "Transaction Amount":
+                                metric.get(
+                                    "amount",
+                                    0
+                                )
+                        })
+
+                except Exception:
+                    continue
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# TOP USERS
+# ============================================================
+
+@st.cache_data
+def load_top_users(data_root):
+
+    path = (
+        data_root
+        / "top"
+        / "user"
+        / "country"
+        / "india"
+        / "state"
+    )
+
+    rows = []
+
+    if not path.exists():
+        return pd.DataFrame()
+
+    for state_dir in path.iterdir():
+
+        if not state_dir.is_dir():
+            continue
+
+        for year_dir in state_dir.iterdir():
+
+            if not year_dir.is_dir():
+                continue
+
+            for file in year_dir.glob("*.json"):
+
+                try:
+
+                    with open(
+                        file,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
+                        data = json.load(f)
+
+                    pincodes = (
+                        data.get("data", {})
+                        .get("pincodes", [])
+                    )
+
+                    for item in pincodes:
+
+                        rows.append({
+                            "State": clean_name(
+                                state_dir.name
+                            ),
+                            "Pincode":
+                                item.get(
+                                    "name",
+                                    ""
+                                ),
+                            "Year": int(
+                                year_dir.name
+                            ),
+                            "Quarter":
+                                quarter_number(
+                                    file.name
+                                ),
+                            "Registered Users":
+                                item.get(
+                                    "registeredUsers",
+                                    0
+                                )
+                        })
+
+                except Exception:
+                    continue
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# LOAD ALL DATA
+# ============================================================
 
 with st.spinner(
-    "Loading PhonePe data..."
+    "Preparing PhonePe dashboard..."
 ):
 
-    transaction_df = load_transactions()
-    user_df = load_users()
+    agg_transactions = load_aggregated_transactions(
+        DATA_ROOT
+    )
+
+    agg_users = load_aggregated_users(
+        DATA_ROOT
+    )
+
+    map_transactions = load_map_transactions(
+        DATA_ROOT
+    )
+
+    map_users = load_map_users(
+        DATA_ROOT
+    )
+
+    top_transactions = load_top_transactions(
+        DATA_ROOT
+    )
+
+    top_users = load_top_users(
+        DATA_ROOT
+    )
 
 
-# =========================================================
-# CHECK DATA
-# =========================================================
+# ============================================================
+# VALIDATION
+# ============================================================
 
-if transaction_df.empty:
+if agg_transactions.empty:
 
     st.error(
-        "Transaction data could not be loaded."
+        "No transaction data was found."
     )
 
     st.stop()
 
 
-# =========================================================
+# ============================================================
 # SIDEBAR
-# =========================================================
+# ============================================================
 
-st.sidebar.header("🔎 Filters")
+st.sidebar.title("📱 PhonePe Pulse")
 
-
-# State filter
-
-states = sorted(
-    transaction_df["State"].unique()
+st.sidebar.markdown(
+    "### Dashboard Filters"
 )
 
+
+states = sorted(
+    agg_transactions["State"].unique()
+)
+
+years = sorted(
+    agg_transactions["Year"].unique()
+)
+
+quarters = sorted(
+    agg_transactions["Quarter"].unique()
+)
+
+
 selected_states = st.sidebar.multiselect(
-    "Select State",
+    "State",
     states,
     default=states
 )
 
 
-# Year filter
-
-years = sorted(
-    transaction_df["Year"].unique()
-)
-
 selected_years = st.sidebar.multiselect(
-    "Select Year",
+    "Year",
     years,
     default=years
 )
 
 
-# Quarter filter
-
-quarters = sorted(
-    transaction_df["Quarter"].unique()
-)
-
 selected_quarters = st.sidebar.multiselect(
-    "Select Quarter",
+    "Quarter",
     quarters,
     default=quarters
 )
 
 
-# =========================================================
-# APPLY FILTERS
-# =========================================================
+# ============================================================
+# FILTER TRANSACTIONS
+# ============================================================
 
-filtered_transactions = transaction_df[
-    transaction_df["State"].isin(
+ft = agg_transactions[
+    agg_transactions["State"].isin(
         selected_states
     )
     &
-    transaction_df["Year"].isin(
+    agg_transactions["Year"].isin(
         selected_years
     )
     &
-    transaction_df["Quarter"].isin(
+    agg_transactions["Quarter"].isin(
         selected_quarters
     )
 ]
 
 
-filtered_users = user_df[
-    user_df["State"].isin(
+# ============================================================
+# FILTER MAP DATA
+# ============================================================
+
+fm = map_transactions[
+    map_transactions["State"].isin(
         selected_states
     )
     &
-    user_df["Year"].isin(
+    map_transactions["Year"].isin(
         selected_years
     )
     &
-    user_df["Quarter"].isin(
+    map_transactions["Quarter"].isin(
         selected_quarters
     )
-]
+] if not map_transactions.empty else pd.DataFrame()
 
 
-# =========================================================
-# KPI SECTION
-# =========================================================
+# ============================================================
+# HEADER
+# ============================================================
 
-st.subheader("📊 Key Performance Indicators")
+st.title("📱 PhonePe Pulse Data Visualization")
+
+st.markdown(
+    "### Interactive analysis of PhonePe transactions, "
+    "users, districts and top-performing locations."
+)
 
 
-total_transactions = filtered_transactions[
+# ============================================================
+# KPI CARDS
+# ============================================================
+
+total_count = ft[
     "Transaction Count"
 ].sum()
 
-
-total_amount = filtered_transactions[
+total_amount = ft[
     "Transaction Amount"
 ].sum()
 
+state_count = ft[
+    "State"
+].nunique()
 
-total_users = filtered_users[
-    "User Count"
-].sum()
+year_count = ft[
+    "Year"
+].nunique()
 
 
-col1, col2, col3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 
 
-with col1:
+with c1:
 
     st.metric(
-        "Total Transactions",
-        f"{total_transactions:,.0f}"
+        "Transactions",
+        f"{total_count:,.0f}"
     )
 
 
-with col2:
+with c2:
 
     st.metric(
-        "Total Transaction Amount",
+        "Transaction Value",
         f"₹{total_amount:,.2f}"
     )
 
 
-with col3:
+with c3:
 
     st.metric(
-        "Total Users",
-        f"{total_users:,.0f}"
+        "States",
+        state_count
     )
 
 
-# =========================================================
-# TRANSACTION TYPE ANALYSIS
-# =========================================================
+with c4:
 
-st.subheader(
-    "💳 Transaction Type Analysis"
-)
-
-
-transaction_type = (
-    filtered_transactions
-    .groupby("Transaction Type")
-    ["Transaction Amount"]
-    .sum()
-    .reset_index()
-    .sort_values(
-        "Transaction Amount",
-        ascending=False
+    st.metric(
+        "Years",
+        year_count
     )
+
+
+# ============================================================
+# TABS
+# ============================================================
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "💳 Transactions",
+        "👥 Users",
+        "🗺️ Map / District",
+        "🏆 Top Analysis",
+        "📋 Data"
+    ]
 )
 
 
-fig1 = px.bar(
-    transaction_type,
-    x="Transaction Type",
-    y="Transaction Amount",
-    title="Transaction Amount by Type"
-)
+# ============================================================
+# TAB 1 - TRANSACTIONS
+# ============================================================
 
-st.plotly_chart(
-    fig1,
-    use_container_width=True
-)
+with tab1:
 
-
-# =========================================================
-# STATE ANALYSIS
-# =========================================================
-
-st.subheader(
-    "🇮🇳 State-wise Transaction Analysis"
-)
-
-
-state_data = (
-    filtered_transactions
-    .groupby("State")
-    .agg(
-        {
-            "Transaction Count": "sum",
-            "Transaction Amount": "sum"
-        }
+    st.subheader(
+        "Transaction Analysis"
     )
-    .reset_index()
-    .sort_values(
-        "Transaction Amount",
-        ascending=False
+
+    col1, col2 = st.columns(2)
+
+
+    with col1:
+
+        type_data = (
+            ft.groupby(
+                "Transaction Type"
+            )[
+                "Transaction Amount"
+            ]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Transaction Amount",
+                ascending=False
+            )
+        )
+
+        fig = px.bar(
+            type_data,
+            x="Transaction Type",
+            y="Transaction Amount",
+            title="Transaction Amount by Category"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+
+    with col2:
+
+        state_data = (
+            ft.groupby("State")
+            ["Transaction Amount"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Transaction Amount",
+                ascending=False
+            )
+            .head(10)
+        )
+
+        fig = px.bar(
+            state_data,
+            x="Transaction Amount",
+            y="State",
+            orientation="h",
+            title="Top 10 States by Transaction Amount"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+
+    st.subheader(
+        "Transaction Trend"
     )
-)
 
-
-fig2 = px.bar(
-    state_data.head(10),
-    x="State",
-    y="Transaction Amount",
-    title="Top 10 States by Transaction Amount"
-)
-
-st.plotly_chart(
-    fig2,
-    use_container_width=True
-)
-
-
-# =========================================================
-# TRANSACTION TREND
-# =========================================================
-
-st.subheader(
-    "📈 Transaction Trend"
-)
-
-
-trend = (
-    filtered_transactions
-    .groupby(
-        ["Year", "Quarter"]
+    trend = (
+        ft.groupby(
+            ["Year", "Quarter"]
+        )[
+            "Transaction Amount"
+        ]
+        .sum()
+        .reset_index()
     )
-    ["Transaction Amount"]
-    .sum()
-    .reset_index()
-)
 
-
-trend["Period"] = (
-    trend["Year"].astype(str)
-    + " Q"
-    + trend["Quarter"].astype(str)
-)
-
-
-fig3 = px.line(
-    trend,
-    x="Period",
-    y="Transaction Amount",
-    markers=True,
-    title="Transaction Amount Over Time"
-)
-
-st.plotly_chart(
-    fig3,
-    use_container_width=True
-)
-
-
-# =========================================================
-# USER BRAND ANALYSIS
-# =========================================================
-
-st.subheader(
-    "📱 User Brand Analysis"
-)
-
-
-brand_data = (
-    filtered_users
-    .groupby("Brand")
-    ["User Count"]
-    .sum()
-    .reset_index()
-    .sort_values(
-        "User Count",
-        ascending=False
+    trend["Period"] = (
+        trend["Year"].astype(str)
+        + " Q"
+        + trend["Quarter"].astype(str)
     )
-)
+
+    fig = px.line(
+        trend,
+        x="Period",
+        y="Transaction Amount",
+        markers=True,
+        title="Transaction Amount Over Time"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 
-fig4 = px.pie(
-    brand_data.head(10),
-    names="Brand",
-    values="User Count",
-    title="User Distribution by Device Brand"
-)
+# ============================================================
+# TAB 2 - USERS
+# ============================================================
 
-st.plotly_chart(
-    fig4,
-    use_container_width=True
-)
+with tab2:
+
+    st.subheader(
+        "User Analysis"
+    )
+
+    if agg_users.empty:
+
+        st.warning(
+            "User-by-device data is not available "
+            "in this PhonePe data release."
+        )
+
+    else:
+
+        fu = agg_users[
+            agg_users["State"].isin(
+                selected_states
+            )
+            &
+            agg_users["Year"].isin(
+                selected_years
+            )
+            &
+            agg_users["Quarter"].isin(
+                selected_quarters
+            )
+        ]
+
+        user_brand = (
+            fu.groupby("Brand")
+            ["User Count"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "User Count",
+                ascending=False
+            )
+            .head(15)
+        )
+
+        fig = px.bar(
+            user_brand,
+            x="Brand",
+            y="User Count",
+            title="Users by Device Brand"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        st.dataframe(
+            fu,
+            use_container_width=True
+        )
 
 
-# =========================================================
-# DATA TABLE
-# =========================================================
+# ============================================================
+# TAB 3 - MAP / DISTRICT
+# ============================================================
 
-st.subheader(
-    "📋 Transaction Data"
-)
+with tab3:
 
-st.dataframe(
-    filtered_transactions,
-    use_container_width=True
-)
+    st.subheader(
+        "State and District Analysis"
+    )
+
+    if fm.empty:
+
+        st.warning(
+            "Map transaction data is not available."
+        )
+
+    else:
+
+        district_data = (
+            fm.groupby("District")
+            ["Transaction Amount"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Transaction Amount",
+                ascending=False
+            )
+            .head(20)
+        )
+
+        fig = px.bar(
+            district_data,
+            x="Transaction Amount",
+            y="District",
+            orientation="h",
+            title="Top 20 Districts by Transaction Amount"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
 
-# =========================================================
+        state_map = (
+            fm.groupby("State")
+            ["Transaction Amount"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Transaction Amount",
+                ascending=False
+            )
+        )
+
+        fig = px.bar(
+            state_map.head(20),
+            x="State",
+            y="Transaction Amount",
+            title="State-wise Transaction Amount"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+
+        st.dataframe(
+            fm,
+            use_container_width=True
+        )
+
+
+# ============================================================
+# TAB 4 - TOP ANALYSIS
+# ============================================================
+
+with tab4:
+
+    st.subheader(
+        "Top States / Pin Codes"
+    )
+
+    if top_transactions.empty:
+
+        st.warning(
+            "Top transaction data is not available."
+        )
+
+    else:
+
+        ftp = top_transactions[
+            top_transactions["State"].isin(
+                selected_states
+            )
+            &
+            top_transactions["Year"].isin(
+                selected_years
+            )
+            &
+            top_transactions["Quarter"].isin(
+                selected_quarters
+            )
+        ]
+
+        top_pin = (
+            ftp.groupby("Pincode")
+            ["Transaction Amount"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Transaction Amount",
+                ascending=False
+            )
+            .head(20)
+        )
+
+        fig = px.bar(
+            top_pin,
+            x="Transaction Amount",
+            y="Pincode",
+            orientation="h",
+            title="Top 20 Pincodes by Transaction Amount"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        st.dataframe(
+            ftp,
+            use_container_width=True
+        )
+
+
+    st.subheader(
+        "Top Registered Users"
+    )
+
+    if not top_users.empty:
+
+        ftu = top_users[
+            top_users["State"].isin(
+                selected_states
+            )
+            &
+            top_users["Year"].isin(
+                selected_years
+            )
+            &
+            top_users["Quarter"].isin(
+                selected_quarters
+            )
+        ]
+
+        top_user_pin = (
+            ftu.groupby("Pincode")
+            ["Registered Users"]
+            .sum()
+            .reset_index()
+            .sort_values(
+                "Registered Users",
+                ascending=False
+            )
+            .head(20)
+        )
+
+        fig = px.bar(
+            top_user_pin,
+            x="Registered Users",
+            y="Pincode",
+            orientation="h",
+            title="Top 20 Pincodes by Registered Users"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+
+# ============================================================
+# TAB 5 - DATA
+# ============================================================
+
+with tab5:
+
+    st.subheader(
+        "Aggregated Transaction Data"
+    )
+
+    st.dataframe(
+        ft,
+        use_container_width=True,
+        height=500
+    )
+
+
+# ============================================================
 # FOOTER
-# =========================================================
+# ============================================================
 
 st.markdown("---")
 
 st.caption(
-    "PhonePe Transaction Insights | "
-    "Python • Pandas • Plotly • Streamlit"
+    "PhonePe Pulse Dashboard | "
+    "Python | Pandas | Plotly | Streamlit"
 )
