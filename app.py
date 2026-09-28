@@ -7,6 +7,16 @@ import streamlit as st
 from sqlalchemy import create_engine, inspect, text
 
 st.set_page_config(page_title="PhonePe Transaction Insights", page_icon="💜", layout="wide")
+
+st.markdown("""
+<style>
+.block-container {padding-top: 1.5rem;}
+h1 {background: linear-gradient(90deg,#5F259F,#B39DDB); -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; font-weight: 800;}
+div[data-testid="stMetric"] {background: linear-gradient(135deg,#5F259F 0%,#7E57C2 100%);
+    padding: 14px 18px; border-radius: 14px; box-shadow: 0 4px 14px rgba(95,37,159,.25);}
+div[data-testid="stMetric"] * {color: #fff !important;}
+</style>""", unsafe_allow_html=True)
 GEO_URL = ("https://gist.githubusercontent.com/jbrobst/56c13bbbf9d97d187fea01ca62ea5112/raw/"
            "e388c4cae20aa53cb5090210a42ebb9b765c0a36/india_states_geo.json")
 
@@ -157,32 +167,90 @@ elif page == "Insurance":
     st.subheader("Top 10 districts"); st.dataframe(dist, use_container_width=True, hide_index=True)
 
 elif page == "Geo Map":
-    src = st.radio("Dataset", ["Transactions", "Insurance", "Users"], horizontal=True)
-    if src == "Users":
-        df = q(f"SELECT state, SUM(registered_users) value FROM map_user{W} GROUP BY state", **P)
-    else:
-        tbl = "aggregated_transaction" if src == "Transactions" else "aggregated_insurance"
-        df = q(f"SELECT state, SUM(amount) value FROM {tbl}{W} GROUP BY state", **P)
-    df["key"] = df.state.map(norm)
+    SCALES = {"PhonePe Purple": ["#F3EEFA", "#CDB8EA", "#9D7BD1", "#7440B5", "#5F259F", "#2D0A57"],
+              "Plasma": "Plasma", "Viridis": "Viridis", "Sunset": "Sunsetdark", "Teal": "Tealgrn"}
+    c1, c2 = st.columns([2, 1])
+    src = c1.radio("Dataset", ["Transactions", "Insurance", "Users"], horizontal=True)
+    theme = c2.selectbox("Colour theme", list(SCALES))
+    scale = SCALES[theme]
+    unit = "" if src == "Users" else "₹"
+    what = "Registered users" if src == "Users" else f"{src} value"
+
+    def state_df(by_year=False):
+        yr = "year, " if by_year else ""
+        w = W.replace(" AND year=:y", "") if by_year else W
+        pp = {k: v for k, v in P.items() if not (by_year and k == "y")}
+        if src == "Users":
+            sql = f"SELECT {yr}state, SUM(registered_users) value FROM map_user{w} GROUP BY {yr}state"
+        else:
+            tbl = "aggregated_transaction" if src == "Transactions" else "aggregated_insurance"
+            sql = f"SELECT {yr}state, SUM(amount) value FROM {tbl}{w} GROUP BY {yr}state"
+        d = q(sql, **pp)
+        d["key"] = d.state.map(norm)
+        d["label"] = d.value.map(lambda v: f"{unit}{fmt(v)}")
+        return d
+
+    df = state_df().sort_values("value", ascending=False).reset_index(drop=True)
+    df["rank"] = df.index + 1
+    tot = df.value.sum()
+    k = st.columns(4)
+    k[0].metric(what, f"{unit}{fmt(tot)}")
+    k[1].metric("Leading state", df.state.iloc[0], f"{df.value.iloc[0] / tot:.1%} share")
+    k[2].metric("Top 5 states share", f"{df.value.head(5).sum() / tot:.1%}")
+    k[3].metric("States covered", len(df))
+
     gj, geo_errs = india_geojson()
-    if gj:
-        fig = px.choropleth(df, geojson=gj, locations="key", featureidkey="properties.key", color="value",
-                            hover_name="state", color_continuous_scale="Purples")
-        fig.update_geos(fitbounds="locations", visible=False)
-        fig.update_layout(height=650, margin=dict(l=0, r=0, t=0, b=0))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Could not load the India map file - showing a bar chart instead.")
-        with st.expander("Why? (technical details)"):
-            st.write(geo_errs)
-            st.write("Fix: download any India states GeoJSON and save it next to app.py as india_states.geojson")
-        st.plotly_chart(px.bar(df.sort_values("value"), x="value", y="state", orientation="h", height=800),
-                        use_container_width=True)
-    st.subheader("District level")
-    s = st.selectbox("State", sorted(df.state))
+    left, right = st.columns([2.3, 1])
+    with left:
+        animate = st.toggle("▶ Animate over years", value=False)
+        if gj:
+            if animate:
+                ad = state_df(by_year=True).sort_values("year")
+                fig = px.choropleth(ad, geojson=gj, locations="key", featureidkey="properties.key",
+                                    color="value", animation_frame="year", hover_name="state",
+                                    hover_data={"key": False, "value": False, "year": False, "label": True},
+                                    color_continuous_scale=scale, range_color=(0, ad.value.max()))
+            else:
+                fig = px.choropleth(df, geojson=gj, locations="key", featureidkey="properties.key",
+                                    color="value", color_continuous_scale=scale,
+                                    custom_data=["state", "label", "rank"])
+                fig.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>" + what +
+                                  ": %{customdata[1]}<br>Rank: #%{customdata[2]}<extra></extra>")
+            fig.update_traces(marker_line_color="rgba(255,255,255,0.85)", marker_line_width=0.7)
+            fig.update_geos(fitbounds="locations", visible=False, bgcolor="rgba(0,0,0,0)")
+            fig.update_layout(height=680, margin=dict(l=0, r=0, t=10, b=0),
+                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              coloraxis_colorbar=dict(title=what, thickness=12, len=0.6, x=0.98))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Could not load the India map file - showing a bar chart instead.")
+            with st.expander("Why? (technical details)"):
+                st.write(geo_errs)
+                st.write("Fix: save any India states GeoJSON next to app.py as india_states.geojson")
+            st.plotly_chart(px.bar(df.sort_values("value"), x="value", y="state", orientation="h",
+                                   height=800, color="value", color_continuous_scale=scale),
+                            use_container_width=True)
+    with right:
+        top = df.head(10)
+        bar = px.bar(top, x="value", y="state", orientation="h", text="label", color="value",
+                     color_continuous_scale=scale, title="🏆 Top 10 states")
+        bar.update_traces(textposition="outside", cliponaxis=False)
+        bar.update_yaxes(autorange="reversed", title=None)
+        bar.update_xaxes(visible=False)
+        bar.update_layout(height=680, coloraxis_showscale=False, margin=dict(l=0, r=60, t=40, b=0),
+                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(bar, use_container_width=True)
+
+    st.subheader("🔎 District drill-down")
+    sel = st.selectbox("State", sorted(df.state))
     d = q(f"SELECT district, SUM(txn_count) txns, SUM(amount) amount FROM map_map{W} AND state=:s "
-          "GROUP BY district ORDER BY amount DESC", s=s, **P)
-    st.plotly_chart(px.bar(d, x="district", y="amount"), use_container_width=True)
+          "GROUP BY district ORDER BY amount DESC", s=sel, **P)
+    tm = px.treemap(d, path=[px.Constant(sel), "district"], values="amount", color="amount",
+                    color_continuous_scale=scale, hover_data={"txns": ":,"})
+    tm.update_traces(marker_line_width=2, marker_line_color="white", textinfo="label+percent root")
+    tm.update_layout(height=450, margin=dict(l=0, r=0, t=10, b=0), coloraxis_showscale=False,
+                     paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(tm, use_container_width=True)
 
 elif page == "Top Performers":
     ds = st.radio("Dataset", ["Transactions", "Insurance", "Users"], horizontal=True, key="topds")
