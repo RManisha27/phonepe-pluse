@@ -1,5 +1,5 @@
 """PhonePe Transaction Insights - Streamlit dashboard.  Run:  streamlit run app.py"""
-import os, re
+import json, os, re
 import pandas as pd
 import plotly.express as px
 import requests
@@ -34,21 +34,44 @@ def q(sql, **params):
     return pd.read_sql(text(sql), engine(), params=params)
 
 
-@st.cache_data(show_spinner=False)
-def india_geojson():
-    try:
-        gj = requests.get(GEO_URL, timeout=15).json()
-        for f in gj["features"]:
-            f["properties"]["key"] = norm(f["properties"]["ST_NM"])
-        return gj
-    except Exception:
-        return None
+GEO_URLS = [
+    GEO_URL,
+    "https://raw.githubusercontent.com/Subhash9325/GeoJson-Data-of-Indian-States/master/Indian_States",
+    "https://raw.githubusercontent.com/geohacker/india/master/state/india_state.geojson",
+]
+ALIAS = {"andamanandnicobarislands": "andaman", "andamanandnicobarisland": "andaman",
+         "andamanandnicobar": "andaman", "nctofdelhi": "delhi", "orissa": "odisha",
+         "uttaranchal": "uttarakhand", "pondicherry": "puducherry",
+         "dadraandnagarhavelianddamananddiu": "dnhdd", "dadaraandnagarhavelli": "dnhdd",
+         "dadraandnagarhaveli": "dnhdd", "damananddiu": "dnhdd"}
 
 
 def norm(s):
-    s = re.sub(r"[^a-z0-9]", "", s.lower().replace("&", "and"))
-    return {"andamanandnicobarislands": "andamanandnicobarisland", "delhi": "nctofdelhi",
-            "dadraandnagarhavelianddamananddiu": "dadaraandnagarhavelli"}.get(s, s)
+    s = re.sub(r"[^a-z0-9]", "", str(s).lower().replace("&", "and"))
+    return ALIAS.get(s, s)
+
+
+@st.cache_data(show_spinner=False)
+def india_geojson():
+    """Local file india_states.geojson wins; otherwise try several public URLs."""
+    gj, errs = None, []
+    if os.path.exists("india_states.geojson"):
+        gj = json.load(open("india_states.geojson", encoding="utf-8"))
+    else:
+        for url in GEO_URLS:
+            try:
+                r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+                gj = r.json()
+                break
+            except Exception as e:
+                errs.append(f"{url} -> {e}")
+    if gj is not None:
+        for f in gj["features"]:
+            pr = f["properties"]
+            name = next((pr[k] for k in ("ST_NM", "NAME_1", "st_nm", "name", "NAME") if k in pr), "")
+            pr["key"] = norm(name)
+    return gj, errs
 
 
 def fmt(n):
@@ -141,7 +164,7 @@ elif page == "Geo Map":
         tbl = "aggregated_transaction" if src == "Transactions" else "aggregated_insurance"
         df = q(f"SELECT state, SUM(amount) value FROM {tbl}{W} GROUP BY state", **P)
     df["key"] = df.state.map(norm)
-    gj = india_geojson()
+    gj, geo_errs = india_geojson()
     if gj:
         fig = px.choropleth(df, geojson=gj, locations="key", featureidkey="properties.key", color="value",
                             hover_name="state", color_continuous_scale="Purples")
@@ -149,7 +172,10 @@ elif page == "Geo Map":
         fig.update_layout(height=650, margin=dict(l=0, r=0, t=0, b=0))
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("Could not download the India GeoJSON - showing a bar chart instead.")
+        st.warning("Could not load the India map file - showing a bar chart instead.")
+        with st.expander("Why? (technical details)"):
+            st.write(geo_errs)
+            st.write("Fix: download any India states GeoJSON and save it next to app.py as india_states.geojson")
         st.plotly_chart(px.bar(df.sort_values("value"), x="value", y="state", orientation="h", height=800),
                         use_container_width=True)
     st.subheader("District level")
