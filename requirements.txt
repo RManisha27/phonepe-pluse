@@ -1,0 +1,7 @@
+streamlit>=1.35
+pandas
+plotly
+sqlalchemy
+requests
+# pymysql        # only if you use MySQL
+# psycopg2-binary # only if you use PostgreSQL
