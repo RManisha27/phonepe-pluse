@@ -1,31 +1,23 @@
-# PhonePe Transaction Insights (Streamlit)
+# 💜 PhonePe Transaction Insights
+https://phonepe-pluse-nnkrjgp2dvszqcawcjbgfo.streamlit.app/
 
-Pipeline: **PhonePe Pulse JSON → SQL (9 tables) → SQL analysis → Plotly charts → Streamlit dashboard**
+A Streamlit dashboard built on the [PhonePe Pulse](https://github.com/PhonePe/pulse) dataset, covering transactions, user engagement, and insurance across India — down to state, district, and pincode level.
 
-## Run locally
-```bash
-pip install -r requirements.txt
-git clone https://github.com/PhonePe/pulse.git
-python etl.py --data pulse/data          # builds phonepe.db (SQLite)
-streamlit run app.py
-```
-No data yet? `streamlit run app.py` auto-creates a synthetic demo DB (or `python etl.py --demo`).
+**Pipeline:** PhonePe Pulse JSON → SQL (9 tables) → SQL analysis → Plotly charts → Streamlit dashboard
 
-MySQL / PostgreSQL: `python etl.py --data pulse/data --db mysql+pymysql://user:pwd@host/phonepe`
-then set the same URL as env var `DATABASE_URL` (or in Streamlit secrets) for the app.
+## Features
 
-## Tables
-aggregated_user / aggregated_transaction / aggregated_insurance,
-map_user / map_map / map_insurance, top_user / top_map / top_insurance.
+- **Overview** — headline metrics (transaction count, payment value, average ticket size, registered users, insurance policies)
+- **Transactions** — category-wise breakdown, top states by value
+- **Users** — device brand share, app engagement (opens per user) by state
+- **Insurance** — policy trends by year, top states and districts
+- **Geo Map** — animated India choropleth with multiple colour themes, top-10 leaderboard, and district-level treemap drill-down
+- **Top Performers** — top 10 states / districts / pincodes by any metric
+- **Business Case Studies** — 10 ready-made SQL queries with charts, covering growth trends, seasonality, segmentation, and outlier detection
+- Year and quarter filters apply across every page
 
-## Dashboard pages
-Overview · Transactions · Users · Insurance · Geo Map (state choropleth + district drill-down) ·
-Top Performers (states / districts / pincodes) · Business Case Studies (10 SQL queries with charts).
+## Tech stack
 
-## Deploy online (Streamlit Community Cloud - free)
-1. Push this folder to a GitHub repo (include `phonepe.db` if it is < 100 MB, or use a hosted MySQL/Postgres).
-2. Go to share.streamlit.io → **New app** → pick repo, branch, file `app.py`.
-3. If using a hosted DB: Settings → Secrets → `DATABASE_URL = "mysql+pymysql://..."`.
-4. Deploy - you get a public URL like `https://<your-app>.streamlit.app`.
+Python · Streamlit · Pandas · Plotly · SQLAlchemy · SQLite (or MySQL / PostgreSQL)
 
-Note: Pulse state names differ slightly from the GeoJSON names; aliases live in `norm()` in `app.py`.
+## Project structure
